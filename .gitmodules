@@ -2,11 +2,7 @@
 	path = deps/sinter
 	url = https://github.com/source-academy/sinter.git
 	shallow = true
-[submodule "deps/wolfMQTT"]
-	path = deps/wolfMQTT
-	url = https://github.com/wolfSSL/wolfMQTT.git
-	shallow = true
-[submodule "deps/wolfssl"]
-	path = deps/wolfssl
-	url = https://github.com/wolfSSL/wolfssl.git
+[submodule "deps/mosquitto"]
+	path = deps/mosquitto
+	url = https://github.com/eclipse/mosquitto.git
 	shallow = true
