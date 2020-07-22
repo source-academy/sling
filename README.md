@@ -19,6 +19,8 @@ will receive programs from and publish output to, there is little code shared
 between the daemons (aside from Sinter itself), which use their respective
 platforms' MQTT and TLS libraries where possible.
 
+See [Sling.md](./Sling.md) for the protocol.
+
 ## Directory layout
 
 - `deps`: Dependencies, including Sinter itself.
