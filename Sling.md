@@ -22,15 +22,16 @@ with QoS of at least 1.
 
 ## Data types
 
-All values are represented in little-endian byte order.
+All values are represented in little-endian byte order. There is no padding
+between consecutive fields in a struct.
 
 Data types are specified using Rust type names:
 
-- `i32` represents a 32-bit signed integer
-- `u32` represents a 32-bit unsigned integer
-- `f32` represents a 32-bit IEEE 754 binary floating point
-- `str` represents a UTF-8 null-terminated string
-- `bool` represents a boolean, which is a `u8` representing `true` if nonzero,
+- `i32` is a 32-bit signed integer
+- `u32` is a 32-bit unsigned integer
+- `f32` is a 32-bit IEEE 754 binary floating point
+- `str` is a `u32` string length excluding null-terminator, followed by a UTF-8 null-terminated string
+- `bool` is a boolean, which is a `u8` representing `true` if nonzero,
   and `false` otherwise
 
 ## Message format
@@ -89,7 +90,17 @@ Causes the device to publish a `status` message with its current status.
 
 ### `status` (Device &rarr; Client)
 
-Payload: running status, as a `bool`
+#### Payload
+
+| Name | Type |
+| - | - |
+| Device status | `u16` (0 = idle, 1 = running, 2 = prompt) |
+
+If the status is 2 (prompt), the status is followed by:
+
+| Name | Type |
+| - | - |
+| Prompt string | `str` |
 
 ### `display` (Device &rarr; Client), `input` (Client &rarr; Device)
 
@@ -144,7 +155,6 @@ For `display`:
 | Standard output | 0 |
 | Standard error | 1 |
 | Program result | 2 |
-| Prompt | 3 |
 | Flush | 100 |
 
 For `input`:
@@ -164,6 +174,6 @@ These correspond to `sinter_type_t` in Sinter.
 | Boolean | 3 | `bool` |
 | Integer | 4 | `i32` |
 | Float | 5 | `f32` |
-| String | 6 | `u32` string length excluding null terminator, followed by `str` string data |
-| Array | 7 | Device implementation-defined stringification of array. Payload is same as string. |
+| String | 6 | `str` |
+| Array | 7 | `str` Device implementation-defined stringification of array |
 | Function | 8 | None |
