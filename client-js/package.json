@@ -1,0 +1,25 @@
+{
+  "name": "sling-client",
+  "version": "0.0.1",
+  "description": "Sling client.",
+  "main": "dist/index.js",
+  "repository": "https://github.com/source-academy/sling",
+  "author": "angelsl",
+  "license": "Apache-2.0",
+  "devDependencies": {
+    "@types/node": "^14.0.27",
+    "@typescript-eslint/eslint-plugin": "^3.7.1",
+    "@typescript-eslint/parser": "^3.7.1",
+    "eslint": "^7.5.0",
+    "prettier": "2.0.5",
+    "typescript": "^3.9.7"
+  },
+  "dependencies": {
+    "mqtt": "^4.1.0"
+  },
+  "scripts": {
+    "eslint": "eslint src",
+    "format": "eslint --fix src && prettier src",
+    "build": "tsc"
+  }
+}

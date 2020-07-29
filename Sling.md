@@ -22,6 +22,8 @@ with QoS of at least 1.
 
 ## Data types
 
+All values are represented in little-endian byte order.
+
 Data types are specified using Rust type names:
 
 - `i32` represents a 32-bit signed integer
@@ -78,6 +80,12 @@ Causes the device to stop running any currently running program.
 
 Upon receipt of the message, the device should publish a `status` message to update
 all connected clients.
+
+### `ping` (Client &rarr; Device)
+
+Payload: none
+
+Causes the device to publish a `status` message with its current status.
 
 ### `status` (Device &rarr; Client)
 
@@ -143,7 +151,7 @@ For `input`:
 
 | Type | Value |
 | - | - |
-| Prompt result | 4 |
+| Prompt response | 4 |
 
 #### Message data
 

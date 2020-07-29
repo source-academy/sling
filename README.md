@@ -26,3 +26,4 @@ See [Sling.md](./Sling.md) for the protocol.
 - `deps`: Dependencies, including Sinter itself.
 - `linux`: Linux daemon. This is written with embedded Linux in mind, but will of course work on any Linux device.
 - `esp32`: ESP32 daemon.
+- `client-js`: Client for the browser.
