@@ -279,6 +279,8 @@ export function serialiseMqttMessage(message: SlingMessage): Buffer | null {
           case 'array':
             entries.push(['str', message.value]);
             break;
+          default:
+            return null;
         }
       }
       break;
