@@ -80,6 +80,18 @@ export class SlingClient extends TypedEmitter<SlingClientEvents> {
     this._deviceStatus = undefined;
   }
 
+  sendRun(code: Buffer): void {
+    this.sendMessage({ type: SlingMessageType.RUN, code });
+  }
+
+  sendStop(): void {
+    this.sendMessage({ type: SlingMessageType.STOP });
+  }
+
+  sendPing(): void {
+    this.sendMessage({ type: SlingMessageType.PING });
+  }
+
   sendMessage(message: SlingOptionalIdMessage): void {
     if (!this._mqttClient) {
       return;
@@ -103,7 +115,7 @@ export class SlingClient extends TypedEmitter<SlingClientEvents> {
       slingDeviceMessageTypes.map((type) => `${this.options.deviceId}/${type}`),
       { qos: 1 }
     );
-    this.sendMessage({ type: SlingMessageType.PING });
+    this.sendPing();
   }
 
   private _handleMessage(topic: string, payload: Buffer): void {
