@@ -28,8 +28,7 @@ export function isValidSlingMessageType(type: string): type is SlingMessageType 
   return !!validSlingMessageTypeMap[type];
 }
 
-interface SlingEmptyMessage<T extends SlingMessageType> {
-  id: number;
+export interface SlingEmptyMessage<T extends SlingMessageType> {
   type: T;
 }
 
@@ -60,14 +59,14 @@ const displayMessageTypeToId = {
 
 const displayMessageTypeById = flip<SlingDisplayMessageType>(displayMessageTypeToId);
 
-interface SlingEmptyDisplayMessageGeneric<
+export interface SlingEmptyDisplayMessageGeneric<
   T extends SlingMessageType.DISPLAY | SlingMessageType.INPUT,
   MT extends SlingDisplayMessageType
 > extends SlingEmptyMessage<T> {
   displayType: MT;
 }
 
-interface SlingValuedDisplayMessageGeneric<
+export interface SlingValuedDisplayMessageGeneric<
   T extends SlingMessageType.DISPLAY | SlingMessageType.INPUT,
   PT extends SlingDisplayPayloadType,
   P,
@@ -77,7 +76,7 @@ interface SlingValuedDisplayMessageGeneric<
   value: P;
 }
 
-type SlingDisplayMessageGeneric<
+export type SlingDisplayMessageGeneric<
   T extends SlingMessageType.DISPLAY | SlingMessageType.INPUT,
   MT extends SlingDisplayMessageType
 > =
@@ -87,13 +86,13 @@ type SlingDisplayMessageGeneric<
   | SlingValuedDisplayMessageGeneric<T, 'i32' | 'f32', number, MT>
   | SlingValuedDisplayMessageGeneric<T, 'str' | 'array', string, MT>;
 
-interface SlingDisplayFlushMessage
+export interface SlingDisplayFlushMessage
   extends SlingEmptyDisplayMessageGeneric<SlingMessageType.DISPLAY, 'flush'> {
   startingId: number;
   count: number;
 }
 
-type SlingNonFlushDisplayMessage =
+export type SlingNonFlushDisplayMessage =
   | SlingDisplayMessageGeneric<SlingMessageType.DISPLAY, 'output' | 'error' | 'result'>
   | SlingDisplayMessageGeneric<SlingMessageType.INPUT, 'response'>;
 
@@ -119,12 +118,15 @@ export interface SlingRunMessage extends SlingEmptyMessage<SlingMessageType.RUN>
 export type SlingStopMessage = SlingEmptyMessage<SlingMessageType.STOP>;
 export type SlingPingMessage = SlingEmptyMessage<SlingMessageType.PING>;
 
-export type SlingMessage =
+export type SlingNoIdMessage =
   | SlingRunMessage
   | SlingDisplayMessage
   | SlingStatusMessage
   | SlingStopMessage
   | SlingPingMessage;
+
+export type SlingOptionalIdMessage = SlingNoIdMessage & { id?: number };
+export type SlingMessage = SlingNoIdMessage & { id: number };
 
 function parseDisplayPayload(data: Buffer) {
   const payloadType = displayPayloadTypeById[data.readUInt16LE(6)];
@@ -233,8 +235,12 @@ export function deserialiseMqttMessage(topic: string, data: Buffer): SlingMessag
   return null;
 }
 
-export function serialiseMqttMessage(message: SlingMessage): Buffer | null {
-  const entries: SerialiserEntry[] = [['u32', message.id]];
+function makeNonce() {
+  return Math.floor(Math.random() * 4294967296);
+}
+
+export function serialiseMqttMessage(message: SlingOptionalIdMessage): Buffer | null {
+  const entries: SerialiserEntry[] = [['u32', message.id || makeNonce()]];
   switch (message.type) {
     case SlingMessageType.PING:
     case SlingMessageType.STOP:
