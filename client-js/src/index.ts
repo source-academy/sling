@@ -155,6 +155,9 @@ export class SlingClient extends TypedEmitter<SlingClientEvents> {
           ...this._deviceStatus,
           running: message.status !== 'idle'
         };
+        if (oldRunning === undefined) {
+          this.emit('connect');
+        }
         if (oldRunning !== this._deviceStatus.running) {
           this.emit('statusChange', this._deviceStatus.running);
         }
