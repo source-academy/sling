@@ -1,18 +1,20 @@
 #include <errno.h>
-#include <signal.h>
-#include <stdlib.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
+
+#include <fcntl.h>
 #include <getopt.h>
-#include <sys/types.h>
-#include <sys/wait.h>
+#include <signal.h>
 #include <sys/epoll.h>
+#include <sys/prctl.h>
 #include <sys/signalfd.h>
 #include <sys/socket.h>
-#include <sys/prctl.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include <mosquitto.h>
 
@@ -20,11 +22,7 @@
 
 #define eprintf(...) fprintf(stderr, __VA_ARGS__)
 
-enum device_state {
-  device_state_undefined = 0,
-  device_state_idle = 1,
-  device_state_running = 2
-};
+typedef enum sling_message_status_type device_status_t;
 
 struct sling_config {
   const char *host;
@@ -47,9 +45,13 @@ struct sling_config {
 
   size_t intopic_index;
 
-  enum device_state state;
+  device_status_t status;
   int epollfd;
   int ipcfd;
+
+  uint32_t message_counter;
+  uint32_t display_start_counter;
+  uint32_t last_flush_counter;
 };
 
 enum main_loop_epoll_type {
@@ -59,7 +61,8 @@ enum main_loop_epoll_type {
 };
 
 static void main_loop_epoll_add(enum main_loop_epoll_type type, int fd);
-static void change_state(enum device_state new_state);
+static void send_status(void);
+static void change_status(device_status_t new_status);
 
 static struct mosquitto *mosq;
 static struct sling_config config;
@@ -143,7 +146,8 @@ static void begin_run_program(const char *program, size_t program_size) {
   close(sv[1]);
 
   config.ipcfd = sv[0];
-  change_state(device_state_running);
+  fcntl(config.ipcfd, F_SETFL, O_NONBLOCK);
+  change_status(sling_message_status_type_running);
   main_loop_epoll_add(main_loop_epoll_ipc, config.ipcfd);
 }
 
@@ -158,10 +162,10 @@ static void on_connect(struct mosquitto *mosq, void *obj, int ret) {
     fatal_error("Failed to connect: %d\n", ret);
   }
 
-  mosquitto_subscribe(mosq, NULL, config.intopic_run, 0);
-  mosquitto_subscribe(mosq, NULL, config.intopic_stop, 0);
-  mosquitto_subscribe(mosq, NULL, config.intopic_ping, 0);
-  mosquitto_subscribe(mosq, NULL, config.intopic_input, 0);
+  mosquitto_subscribe(mosq, NULL, config.intopic_run, 1);
+  mosquitto_subscribe(mosq, NULL, config.intopic_stop, 1);
+  mosquitto_subscribe(mosq, NULL, config.intopic_ping, 1);
+  mosquitto_subscribe(mosq, NULL, config.intopic_input, 1);
 }
 
 static void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_message *message) {
@@ -174,13 +178,15 @@ static void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto
 
   switch (message->topic[config.intopic_index]) {
   case 'r': // run
-    if (config.state == device_state_idle) {
-      begin_run_program(message->payload, message->payloadlen);
+    if (config.status == sling_message_status_type_idle) {
+      begin_run_program((const char *)message->payload + 4, message->payloadlen - 4);
     }
     break;
   case 's': // stop
+    // TODO
     break;
   case 'p': // ping
+    change_status(config.status);
     break;
   case 'i': // input
     // TODO
@@ -188,10 +194,17 @@ static void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto
   }
 }
 
-static void change_state(enum device_state new_state) {
-  config.state = new_state;
-  bool publish_payload = new_state == device_state_running;
-  check_mosq(mosquitto_publish(mosq, NULL, config.outtopic_status, sizeof(publish_payload), &publish_payload, 0, false));
+static void send_status(void) {
+    struct sling_message_status publish_payload = {
+    .message_counter = config.message_counter++,
+    .status = config.status
+  };
+  check_mosq(mosquitto_publish(mosq, NULL, config.outtopic_status, sizeof(publish_payload), &publish_payload, 1, false));
+}
+
+static void change_status(device_status_t new_state) {
+  config.status = new_state;
+  send_status();
 }
 
 static int main_loop_make_sigchldfd(void) {
@@ -250,6 +263,7 @@ static int main_loop(void) {
         if (recv_size == -1) {
           continue;
         }
+
         if ((size_t) recv_size > buffer_size) {
           buffer_size = recv_size;
           buffer = realloc(buffer, recv_size);
@@ -257,12 +271,43 @@ static int main_loop(void) {
             fatal_error("Failed to allocate buffer.");
           }
         }
+
         recv_size = check_posix(recv(config.ipcfd, buffer, buffer_size, 0), "ipc recv");
-        check_mosq(mosquitto_publish(mosq, NULL, config.outtopic_display, recv_size, buffer, 0, false));
+        if (recv_size == -1 || (size_t)recv_size < sizeof(struct sling_message_display_flush)) {
+          // sanity check - skip if recv failed or message is smaller than expected
+          continue;
+        }
+
+        struct sling_message_display *to_send = (struct sling_message_display *) buffer;
+        to_send->message_counter = config.message_counter;
+        if (to_send->display_type == sling_message_display_type_flush) {
+          if (config.display_start_counter >= to_send->message_counter) {
+            // skip empty flush
+            continue;
+          }
+          struct sling_message_display_flush *to_send_flush = (struct sling_message_display_flush *) buffer;
+          to_send_flush->starting_id = config.display_start_counter;
+          config.last_flush_counter = to_send->message_counter;
+          recv_size = sizeof(*to_send_flush);
+        } else if (config.display_start_counter <= config.last_flush_counter) {
+          config.display_start_counter = to_send->message_counter;
+        }
+
+        if (to_send->display_type & sling_message_display_type_self_flushing) {
+          config.last_flush_counter = to_send->message_counter;
+        }
+
+        ++config.message_counter;
+        check_mosq(mosquitto_publish(mosq, NULL, config.outtopic_display, recv_size, buffer, 1, false));
         break;
       }
 
       case main_loop_epoll_child: {
+        if (recv(config.ipcfd, buffer, 0, MSG_PEEK | MSG_TRUNC) > 0) {
+          // don't handle the child exit yet
+          break;
+        }
+
         while (read(sigchldfd, buffer, buffer_size) >= 0) {
           // do nothing, just clear it
         }
@@ -272,7 +317,7 @@ static int main_loop(void) {
         }
         close(config.ipcfd);
         config.ipcfd = -1;
-        change_state(device_state_idle);
+        change_status(sling_message_status_type_idle);
         break;
       }
 
@@ -290,7 +335,7 @@ static int read_env_int(const char *name, int def) {
 }
 
 int main(int argc, char *argv[]) {
-  config.state = device_state_idle;
+  config.status = sling_message_status_type_idle;
   config.ipcfd = config.epollfd = -1;
   config.host = getenv("SLING_HOST");
   config.port = read_env_int("SLING_PORT", 0);
@@ -298,6 +343,7 @@ int main(int argc, char *argv[]) {
   config.server_ca_path = getenv("SLING_CA");
   config.client_key_path = getenv("SLING_KEY");
   config.client_cert_path = getenv("SLING_CERT");
+  config.message_counter = config.last_flush_counter = config.display_start_counter = 0;
 
   while (1) {
     static struct option long_options[] = {

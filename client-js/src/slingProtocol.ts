@@ -1,6 +1,8 @@
 import { SerialiserEntry, serialise } from './serialiser';
 
 function flip<T extends string>(o: Record<T, number>): Record<number, T | undefined> {
+  // TODO fixme
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-return
   return Object.fromEntries(Object.entries(o).map(([k, v]) => [v, k]));
 }
 
@@ -64,6 +66,7 @@ export interface SlingEmptyDisplayMessageGeneric<
   MT extends SlingDisplayMessageType
 > extends SlingEmptyMessage<T> {
   displayType: MT;
+  selfFlushing: boolean;
 }
 
 export interface SlingValuedDisplayMessageGeneric<
@@ -89,7 +92,7 @@ export type SlingDisplayMessageGeneric<
 export interface SlingDisplayFlushMessage
   extends SlingEmptyDisplayMessageGeneric<SlingMessageType.DISPLAY, 'flush'> {
   startingId: number;
-  count: number;
+  endingId: number;
 }
 
 export type SlingNonFlushDisplayMessage =
@@ -192,7 +195,8 @@ export function deserialiseMqttMessage(topic: string, data: Buffer): SlingMessag
       }
     }
     case SlingMessageType.DISPLAY: {
-      const displayType = displayMessageTypeById[data.readUInt16LE(4)];
+      const displayTypeId = data.readUInt16LE(4);
+      const displayType = displayMessageTypeById[displayTypeId & 0xFF];
       if (!displayType) {
         return null;
       }
@@ -202,7 +206,8 @@ export function deserialiseMqttMessage(topic: string, data: Buffer): SlingMessag
           type,
           displayType,
           startingId: data.readUInt32LE(6),
-          count: data.readUInt32LE(10)
+          endingId: id,
+          selfFlushing: false
         };
       } else if (displayType !== 'response') {
         const payload = parseDisplayPayload(data);
@@ -211,6 +216,7 @@ export function deserialiseMqttMessage(topic: string, data: Buffer): SlingMessag
             id,
             type,
             displayType,
+            selfFlushing: (displayTypeId & 0xFF00) === 0x100,
             ...payload
           }
         );
@@ -226,6 +232,7 @@ export function deserialiseMqttMessage(topic: string, data: Buffer): SlingMessag
             id,
             type,
             displayType,
+            selfFlushing: false,
             ...payload
           }
         );
@@ -262,7 +269,6 @@ export function serialiseMqttMessage(message: SlingOptionalIdMessage): Buffer | 
       entries.push(['u16', displayMessageTypeToId[message.displayType]]);
       if (message.displayType === 'flush') {
         entries.push(['u32', message.startingId]);
-        entries.push(['u32', message.count]);
       } else {
         entries.push(['u16', displayPayloadTypeToId[message.payloadType]]);
         switch (message.payloadType) {

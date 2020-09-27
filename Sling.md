@@ -144,7 +144,6 @@ Payload for Flush:
 | Name | Type |
 | - | - |
 | Starting message number | `u32` |
-| Message count | `u32` |
 
 #### Display message type
 
@@ -156,6 +155,10 @@ For `display`:
 | Standard error | 1 |
 | Program result | 2 |
 | Flush | 100 |
+
+For standard output, standard error, and program result, the high byte can be
+set to 1 to indicate a self-flush (i.e. this display message consists of only
+the part in the current message).
 
 For `input`:
 

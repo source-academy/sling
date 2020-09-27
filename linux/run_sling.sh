@@ -21,6 +21,10 @@ export SLING_CERT="$SLING_DIR/cert.pem"
 
 export SLING_HOST="$(curl -s "$SLING_BACKEND"/mqtt_endpoint)"
 export SLING_DEVICE_ID="$(curl -s "$SLING_BACKEND"/client_id)"
+
+echo "Device ID: $SLING_DEVICE_ID"
+echo "Endpoint: $SLING_HOST"
+
 curl -s "$SLING_BACKEND"/key > $SLING_KEY || fatal_error "Failed to retrieve client key"
 curl -s "$SLING_BACKEND"/cert > $SLING_CERT || fatal_error "Failed to retrieve client certificate"
 

@@ -27,6 +27,8 @@ export interface SlingClientOptions {
   readonly deviceId: string;
 }
 
+export type SlingClientDisplayValue = SlingNonFlushDisplayMessage['value'];
+
 export interface SlingClientEvents {
   connect: () => void;
   error: (error: Error) => void;
@@ -34,7 +36,7 @@ export interface SlingClientEvents {
   statusChange: (isRunning: boolean) => void;
   prompt: (prompt: string) => void;
   promptDismiss: () => void;
-  display: (message: string, type: SlingDisplayMessageType) => void;
+  display: (message: SlingClientDisplayValue, type: Exclude<SlingDisplayMessageType, 'flush' | 'response'>) => void;
 }
 
 export class SlingClient extends TypedEmitter<SlingClientEvents> {
@@ -113,13 +115,16 @@ export class SlingClient extends TypedEmitter<SlingClientEvents> {
     }
     this._mqttClient.subscribe(
       slingDeviceMessageTypes.map((type) => `${this.options.deviceId}/${type}`),
-      { qos: 1 }
+      { qos: 1 },
+      () => {
+        this.sendPing();
+      }
     );
-    this.sendPing();
   }
 
   private _handleMessage(topic: string, payload: Buffer): void {
     const message = deserialiseMqttMessage(topic, payload);
+    console.error('Got message', payload, message);
     if (!message || (this._lastProcessedMessageId || -1) >= message.id) {
       return;
     }
@@ -147,6 +152,7 @@ export class SlingClient extends TypedEmitter<SlingClientEvents> {
   }
 
   private _processMessage(message: SlingMessage): void {
+    console.log('Processing message', message);
     this._lastProcessedMessageId = message.id;
     switch (message.type) {
       case SlingMessageType.STATUS: {
@@ -172,13 +178,15 @@ export class SlingClient extends TypedEmitter<SlingClientEvents> {
       }
 
       case SlingMessageType.DISPLAY: {
-        if (message.displayType === 'flush') {
+        if (message.selfFlushing && message.displayType !== 'flush') {
+          this.emit('display', message.value, message.displayType);
+        } else if (message.displayType === 'flush') {
           this._queuedFlushes.add(message);
           this._attemptFlush(message);
         } else {
           this._displayBuffer.set(message.id, message);
           for (const flush of this._queuedFlushes) {
-            if (flush.startingId <= message.id && message.id < flush.startingId + flush.count) {
+            if (flush.startingId <= message.id && message.id < flush.endingId) {
               this._attemptFlush(flush);
               break;
             }
@@ -190,7 +198,7 @@ export class SlingClient extends TypedEmitter<SlingClientEvents> {
   }
 
   private _attemptFlush(flush: SlingDisplayFlushMessage): void {
-    const maxId = flush.startingId + flush.count;
+    const maxId = flush.endingId;
     const messageParts = [];
     let displayType: SlingDisplayMessageType | undefined;
     for (let i = flush.startingId; i < maxId; ++i) {
@@ -205,7 +213,9 @@ export class SlingClient extends TypedEmitter<SlingClientEvents> {
       }
       messageParts.push(displayMessage.value);
     }
-    if (!displayType) {
+
+    // TODO tighten the types here so the last 2 clauses are not needed
+    if (!displayType || displayType === 'flush' || displayType === 'response') {
       // TODO should not happen
       return;
     }
