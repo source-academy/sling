@@ -9,6 +9,9 @@ message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 
 project(sling-linux C)
 
+set(THREADS_PREFER_PTHREAD_FLAG ON)
+find_package(Threads REQUIRED)
+
 set(SINTER_STATIC_HEAP 0)
 add_subdirectory(../deps/sinter sinter EXCLUDE_FROM_ALL)
 
@@ -32,7 +35,8 @@ target_include_directories(sling
   PRIVATE include
 )
 
-target_link_libraries(sling libmosquitto_static)
+# pthreads for mosquitto
+target_link_libraries(sling libmosquitto_static Threads::Threads)
 
 add_executable(sinter_host
   src/sinter_host.c
