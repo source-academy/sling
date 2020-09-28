@@ -55,10 +55,11 @@ Devices should use it to guard against duplicate deliveries of the same message.
 The message number for Device &rarr; Client messages is a strictly increasing
 number starting from 0.
 
+- Message ID 0 must be a Hello message.
 - Message numbers should not be skipped, that is, consecutive messages should
   have consecutive message numbers.
     - This is to facilitate reconstructing `display` messages in the correct order.
-- When the message number exceeds 4 000 000 000 (2^32 rounded), devices may wrap
+- When the message number is 4 294 967 295 (2^32 minus 1), devices may wrap
   the number around to 0.
 
 ## Message types
@@ -87,6 +88,14 @@ all connected clients.
 Payload: none
 
 Causes the device to publish a `status` message with its current status.
+
+### `hello` (Device &rarr; Client)
+
+Payload: `u32` nonce
+
+Sent when the device first comes online. This must be sent with a message ID of 0.
+When this is sent, clients should reset their receive message counters to 0. The
+nonce is used to guard against repeat deliveries of the same `hello` message.
 
 ### `status` (Device &rarr; Client)
 

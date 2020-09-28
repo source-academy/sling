@@ -37,6 +37,7 @@ struct sling_config {
 
   char *outtopic_status;
   char *outtopic_display;
+  char *outtopic_hello;
 
   char *intopic_run;
   char *intopic_stop;
@@ -46,12 +47,21 @@ struct sling_config {
   size_t intopic_index;
 
   device_status_t status;
+  pid_t host_pid;
   int epollfd;
   int ipcfd;
+
+  FILE *urandom;
 
   uint32_t message_counter;
   uint32_t display_start_counter;
   uint32_t last_flush_counter;
+
+// MUST BE POWER OF 2
+#define LAST_MESSAGE_ID_BUF_SIZE 4
+
+  uint32_t last_message_ids[4];
+  size_t last_message_id_index;
 };
 
 enum main_loop_epoll_type {
@@ -62,6 +72,7 @@ enum main_loop_epoll_type {
 
 static void main_loop_epoll_add(enum main_loop_epoll_type type, int fd);
 static void send_status(void);
+static void send_hello_if_zero(void);
 static void change_status(device_status_t new_status);
 
 static struct mosquitto *mosq;
@@ -117,6 +128,11 @@ static void print_usage(char *argv0) {
 static char *program_filename = "program.svm";
 
 static void begin_run_program(const char *program, size_t program_size) {
+  if (config.status != sling_message_status_type_idle) {
+    send_status();
+    return;
+  }
+
   FILE *program_file = fopen(program_filename, "w");
   if (!program_file) {
     check_posix(-1, "program file fopen");
@@ -142,13 +158,27 @@ static void begin_run_program(const char *program, size_t program_size) {
       "exec sinter host");
 
     _Exit(1);
-  }
-  close(sv[1]);
+  } else if (child_pid > 0) {
+    close(sv[1]);
 
-  config.ipcfd = sv[0];
-  fcntl(config.ipcfd, F_SETFL, O_NONBLOCK);
-  change_status(sling_message_status_type_running);
-  main_loop_epoll_add(main_loop_epoll_ipc, config.ipcfd);
+    config.host_pid = child_pid;
+    config.ipcfd = sv[0];
+    fcntl(config.ipcfd, F_SETFL, O_NONBLOCK);
+    change_status(sling_message_status_type_running);
+    main_loop_epoll_add(main_loop_epoll_ipc, config.ipcfd);
+  } else {
+    fatal_errno("fork");
+    change_status(sling_message_status_type_idle);
+  }
+}
+
+static void stop_program(void) {
+  if (config.status == sling_message_status_type_idle || config.host_pid <= 0) {
+    send_status();
+    return;
+  }
+
+  kill(config.host_pid, SIGTERM);
 }
 
 static void on_log(struct mosquitto *mosq, void *obj, int level, const char *message) {
@@ -162,6 +192,8 @@ static void on_connect(struct mosquitto *mosq, void *obj, int ret) {
     fatal_error("Failed to connect: %d\n", ret);
   }
 
+  send_hello_if_zero();
+  send_status();
   mosquitto_subscribe(mosq, NULL, config.intopic_run, 1);
   mosquitto_subscribe(mosq, NULL, config.intopic_stop, 1);
   mosquitto_subscribe(mosq, NULL, config.intopic_ping, 1);
@@ -172,21 +204,28 @@ static void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto
   (void) mosq; (void) obj;
   // hack: the 4 topics we subscribe to all start with <device id>/, and then
   // the first letters of the message types are unique, so we only check those
-  if (config.intopic_index >= strlen(message->topic)) {
+  if (config.intopic_index >= strlen(message->topic) || message->payloadlen < 4) {
     return;
   }
 
+  const uint32_t message_id = *(uint32_t *)message->payload;
+  for (size_t i = 0; i < LAST_MESSAGE_ID_BUF_SIZE; ++i) {
+    if (message_id == config.last_message_ids[i]) {
+      return;
+    }
+  }
+  config.last_message_ids[config.last_message_id_index] = message_id;
+  config.last_message_id_index = (config.last_message_id_index + 1) & (LAST_MESSAGE_ID_BUF_SIZE - 1);
+
   switch (message->topic[config.intopic_index]) {
   case 'r': // run
-    if (config.status == sling_message_status_type_idle) {
-      begin_run_program((const char *)message->payload + 4, message->payloadlen - 4);
-    }
+    begin_run_program((const char *)message->payload + 4, message->payloadlen - 4);
     break;
   case 's': // stop
-    // TODO
+    stop_program();
     break;
   case 'p': // ping
-    change_status(config.status);
+    send_status();
     break;
   case 'i': // input
     // TODO
@@ -194,8 +233,19 @@ static void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto
   }
 }
 
+static void send_hello_if_zero(void) {
+  if (config.message_counter != 0) {
+    return;
+  }
+  config.message_counter++;
+  uint32_t payload[2] = { 0 };
+  fread(payload + 1, sizeof(uint32_t), 1, config.urandom);
+  check_mosq(mosquitto_publish(mosq, NULL, config.outtopic_hello, sizeof(payload), payload, 1, false));
+}
+
 static void send_status(void) {
-    struct sling_message_status publish_payload = {
+  send_hello_if_zero();
+  struct sling_message_status publish_payload = {
     .message_counter = config.message_counter++,
     .status = config.status
   };
@@ -279,6 +329,7 @@ static int main_loop(void) {
         }
 
         struct sling_message_display *to_send = (struct sling_message_display *) buffer;
+        send_hello_if_zero();
         to_send->message_counter = config.message_counter;
         if (to_send->display_type == sling_message_display_type_flush) {
           if (config.display_start_counter >= to_send->message_counter) {
@@ -420,6 +471,7 @@ int main(int argc, char *argv[]) {
 
   config.outtopic_display = sling_topic(config.device_id, SLING_OUTTOPIC_DISPLAY);
   config.outtopic_status = sling_topic(config.device_id, SLING_OUTTOPIC_STATUS);
+  config.outtopic_hello = sling_topic(config.device_id, SLING_OUTTOPIC_HELLO);
 
   config.intopic_input = sling_topic(config.device_id, SLING_INTOPIC_INPUT);
   config.intopic_ping = sling_topic(config.device_id, SLING_INTOPIC_PING);
@@ -427,6 +479,12 @@ int main(int argc, char *argv[]) {
   config.intopic_stop = sling_topic(config.device_id, SLING_INTOPIC_STOP);
 
   config.intopic_index = strlen(config.device_id) + 1;
+
+  config.urandom = fopen("/dev/urandom", "r");
+  if (!config.urandom) {
+    fatal_error("Could not open /dev/urandom.\n");
+  }
+  setvbuf(config.urandom, NULL, _IONBF, 0);
 
   check_mosq(mosquitto_lib_init());
   mosq = mosquitto_new(config.device_id, true, NULL);

@@ -12,11 +12,12 @@
 
 #define SLING_OUTTOPIC_STATUS "status"
 #define SLING_OUTTOPIC_DISPLAY "display"
+#define SLING_OUTTOPIC_HELLO "hello"
 
 enum sling_message_status_type {
   sling_message_status_type_idle = 0,
   sling_message_status_type_running = 1,
-  sling_message_status_type_prompt = 2,
+  sling_message_status_type_prompt = 2
 };
 
 struct __attribute__((packed)) sling_message_status {

@@ -12,10 +12,15 @@ export const enum SlingMessageType {
   PING = 'ping',
   STATUS = 'status',
   DISPLAY = 'display',
-  INPUT = 'input'
+  INPUT = 'input',
+  HELLO = 'hello'
 }
 
-export const slingDeviceMessageTypes = [SlingMessageType.DISPLAY, SlingMessageType.STATUS];
+export const slingDeviceMessageTypes = [
+  SlingMessageType.DISPLAY,
+  SlingMessageType.STATUS,
+  SlingMessageType.HELLO
+];
 export const slingClientMessageTypes = [
   SlingMessageType.RUN,
   SlingMessageType.STOP,
@@ -120,13 +125,15 @@ export interface SlingRunMessage extends SlingEmptyMessage<SlingMessageType.RUN>
 
 export type SlingStopMessage = SlingEmptyMessage<SlingMessageType.STOP>;
 export type SlingPingMessage = SlingEmptyMessage<SlingMessageType.PING>;
+export type SlingHelloMessage = SlingEmptyMessage<SlingMessageType.HELLO> & { nonce: number };
 
 export type SlingNoIdMessage =
   | SlingRunMessage
   | SlingDisplayMessage
   | SlingStatusMessage
   | SlingStopMessage
-  | SlingPingMessage;
+  | SlingPingMessage
+  | SlingHelloMessage;
 
 export type SlingOptionalIdMessage = SlingNoIdMessage & { id?: number };
 export type SlingMessage = SlingNoIdMessage & { id: number };
@@ -170,6 +177,8 @@ export function deserialiseMqttMessage(topic: string, data: Buffer): SlingMessag
   const id = data.readUInt32LE(0);
 
   switch (type) {
+    case SlingMessageType.HELLO:
+      return { id, type, nonce: data.readUInt32LE(4) };
     case SlingMessageType.PING:
     case SlingMessageType.STOP:
       return { id, type };
@@ -196,7 +205,7 @@ export function deserialiseMqttMessage(topic: string, data: Buffer): SlingMessag
     }
     case SlingMessageType.DISPLAY: {
       const displayTypeId = data.readUInt16LE(4);
-      const displayType = displayMessageTypeById[displayTypeId & 0xFF];
+      const displayType = displayMessageTypeById[displayTypeId & 0xff];
       if (!displayType) {
         return null;
       }
@@ -216,7 +225,7 @@ export function deserialiseMqttMessage(topic: string, data: Buffer): SlingMessag
             id,
             type,
             displayType,
-            selfFlushing: (displayTypeId & 0xFF00) === 0x100,
+            selfFlushing: (displayTypeId & 0xff00) === 0x100,
             ...payload
           }
         );
@@ -251,6 +260,10 @@ export function serialiseMqttMessage(message: SlingOptionalIdMessage): Buffer | 
   switch (message.type) {
     case SlingMessageType.PING:
     case SlingMessageType.STOP:
+      break;
+
+    case SlingMessageType.HELLO:
+      entries.push(['u32', message.nonce]);
       break;
 
     case SlingMessageType.RUN:

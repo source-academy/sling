@@ -36,7 +36,10 @@ export interface SlingClientEvents {
   statusChange: (isRunning: boolean) => void;
   prompt: (prompt: string) => void;
   promptDismiss: () => void;
-  display: (message: SlingClientDisplayValue, type: Exclude<SlingDisplayMessageType, 'flush' | 'response'>) => void;
+  display: (
+    message: SlingClientDisplayValue,
+    type: Exclude<SlingDisplayMessageType, 'flush' | 'response'>
+  ) => void;
 }
 
 export class SlingClient extends TypedEmitter<SlingClientEvents> {
@@ -49,6 +52,7 @@ export class SlingClient extends TypedEmitter<SlingClientEvents> {
   };
   private _lastProcessedMessageId?: number;
   private _queuedMessages = new Map<number, SlingMessage>();
+  private _seenHellos = new Set<number>();
 
   private readonly _displayBuffer = new Map<number, SlingNonFlushDisplayMessage>();
   private readonly _queuedFlushes = new Set<SlingDisplayFlushMessage>();
@@ -124,18 +128,23 @@ export class SlingClient extends TypedEmitter<SlingClientEvents> {
 
   private _handleMessage(topic: string, payload: Buffer): void {
     const message = deserialiseMqttMessage(topic, payload);
-    console.error('Got message', payload, message);
-    if (!message || (this._lastProcessedMessageId || -1) >= message.id) {
+    if (!message) {
+      return;
+    }
+
+    if (message.type === 'hello' && !this._seenHellos.has(message.nonce)) {
+      this._seenHellos.add(message.nonce);
+      this._lastProcessedMessageId = 0;
       return;
     }
 
     if (
       this._lastProcessedMessageId === undefined ||
       message.id === this._lastProcessedMessageId + 1 ||
-      (this._lastProcessedMessageId >= 4_000_000_000 && message.id === 0)
+      (this._lastProcessedMessageId >= 4_294_967_295 && message.id === 0)
     ) {
       this._processMessage(message);
-    } else {
+    } else if (message.id > this._lastProcessedMessageId + 1) {
       this._queuedMessages.set(message.id, message);
     }
 
@@ -152,7 +161,6 @@ export class SlingClient extends TypedEmitter<SlingClientEvents> {
   }
 
   private _processMessage(message: SlingMessage): void {
-    console.log('Processing message', message);
     this._lastProcessedMessageId = message.id;
     switch (message.type) {
       case SlingMessageType.STATUS: {
