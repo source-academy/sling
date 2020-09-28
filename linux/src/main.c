@@ -30,6 +30,7 @@ struct sling_config {
   const char *server_ca_path;
   const char *client_key_path;
   const char *client_cert_path;
+  const char *sinter_host_path;
 
   int port;
 
@@ -111,12 +112,13 @@ static int check_posix_nonblock(int result, const char *msg) {
 
 static void print_usage(char *argv0) {
   eprintf("Usage: %s <options>\n%s", argv0,
-    "-h, --host, SLING_HOST:           The hostname of the MQTT server\n"
-    "-p, --port, SLING_PORT:           The port of the MQTT server; defaults to 8883\n"
-    "-i, --device-id, SLING_DEVICE_ID: The device ID\n"
-    "-s, --server-ca, SLING_CA:        Path to the CA issuing the MQTT server's TLS certificate, in PEM format\n"
-    "-k, --client-key, SLING_KEY:      Path to the private key for the client's TLS certificate, in PEM format\n"
-    "-c, --client-cert, SLING_CERT:    Path to the client's TLS certificate, in PEM format\n"
+    "-h, --host, SLING_HOST:              The hostname of the MQTT server\n"
+    "-p, --port, SLING_PORT:              The port of the MQTT server; defaults to 8883\n"
+    "-i, --device-id, SLING_DEVICE_ID:    The device ID\n"
+    "-s, --server-ca, SLING_CA:           Path to the CA issuing the MQTT server's TLS certificate, in PEM format\n"
+    "-k, --client-key, SLING_KEY:         Path to the private key for the client's TLS certificate, in PEM format\n"
+    "-c, --client-cert, SLING_CERT:       Path to the client's TLS certificate, in PEM format\n"
+    "-H, --sinter-host, SINTER_HOST_PATH: Path to the Sinter host, or ./sinter_host by default\n"
     "\n"
     "Options can be passed in via environment variables. Command line options override environment variables.\n"
     "\n"
@@ -153,8 +155,8 @@ static void begin_run_program(const char *program, size_t program_size) {
     close(sv[1]);
 
     check_posix(
-      execl("./sinter_host",
-        "./sinter_host", "--from-sling", program_filename, (char *) NULL),
+      execl(config.sinter_host_path,
+        config.sinter_host_path, "--from-sling", program_filename, (char *) NULL),
       "exec sinter host");
 
     _Exit(1);
@@ -394,27 +396,32 @@ int main(int argc, char *argv[]) {
   config.server_ca_path = getenv("SLING_CA");
   config.client_key_path = getenv("SLING_KEY");
   config.client_cert_path = getenv("SLING_CERT");
+  config.sinter_host_path = getenv("SINTER_HOST_PATH");
   config.message_counter = config.last_flush_counter = config.display_start_counter = 0;
 
   while (1) {
     static struct option long_options[] = {
       {"host",        required_argument, 0, 'h' },
       {"port",        required_argument, 0, 'p' },
-      {"use-tls",     no_argument,       0, 't' },
+      // {"use-tls",     no_argument,       0, 't' },
       {"device-id",   required_argument, 0, 'i' },
       {"server-ca",   required_argument, 0, 's' },
       {"client-key",  required_argument, 0, 'k' },
       {"client-cert", required_argument, 0, 'c' },
+      {"sinter-host", required_argument, 0, 'H' },
       {"help",        no_argument,       0, 0   },
       {0,             0,                 0, 0   }
     };
 
-    int c = getopt_long(argc, argv, "h:p:i:s:k:c:", long_options, NULL);
+    int c = getopt_long(argc, argv, "H:h:p:i:s:k:c:", long_options, NULL);
     if (c == -1) {
       break;
     }
 
     switch (c) {
+    case 'H':
+      config.sinter_host_path = optarg;
+      break;
     case 'h':
       config.host = optarg;
       break;
@@ -460,6 +467,9 @@ int main(int argc, char *argv[]) {
   if (!config.client_cert_path) {
     eprintf("No certificate specified.\n");
     fail = true;
+  }
+  if (!config.sinter_host_path) {
+    config.sinter_host_path = "./sinter_host";
   }
   if (fail) {
     return 1;
