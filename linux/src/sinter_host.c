@@ -14,6 +14,10 @@
 #include "common.h"
 #include "../../common/sling_sinter.h"
 
+#ifdef SLING_SINTERHOST_CUSTOM
+#include SLING_SINTERHOST_CUSTOM
+#endif
+
 static bool from_sling = false;
 
 static char sinter_heap[0x400000];
@@ -163,6 +167,10 @@ int main(int argc, char *argv[]) {
   sinter_printer_integer = print_integer;
   sinter_printer_float = print_float;
   sinter_printer_flush = print_flush;
+
+#ifdef SLING_SINTERHOST_PRERUN
+#include SLING_SINTERHOST_PRERUN
+#endif
 
   sinter_value_t value = { 0 };
   sinter_fault_t result = sinter_run(program, program_size, &value);

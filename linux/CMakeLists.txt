@@ -46,6 +46,18 @@ target_compile_options(sinter_host
   PRIVATE $<$<CONFIG:Release>:-O2>
 )
 
+if(SLING_SINTERHOST_CUSTOM)
+  target_compile_options(sinter_host PRIVATE "-DSLING_SINTERHOST_CUSTOM=\"${SLING_SINTERHOST_CUSTOM}\"")
+endif()
+
+if(SLING_SINTERHOST_PRERUN)
+  target_compile_options(sinter_host PRIVATE "-DSLING_SINTERHOST_PRERUN=\"${SLING_SINTERHOST_PRERUN}\"")
+endif()
+
+if(SLING_SINTERHOST_CUSTOM_SOURCES)
+  target_sources(sinter_host PRIVATE ${SLING_SINTERHOST_CUSTOM_SOURCES})
+endif()
+
 target_include_directories(sinter_host
   PRIVATE include
 )
