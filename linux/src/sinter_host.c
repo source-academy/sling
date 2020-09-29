@@ -6,6 +6,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include <signal.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 
@@ -180,12 +182,29 @@ void read_program(const char *filename) {
   }
 }
 
+static void on_term_signal(int signal) {
+  (void) signal;
+  exit(1);
+}
+
+static void catch_term_signal(void) {
+  // in case our internal functions set atexit hooks,
+  // catch SIGTERM and SIGINT (e.g. as is done for the EV3)
+  struct sigaction act = {
+    .sa_handler = on_term_signal
+  };
+  sigaction(SIGTERM, &act, NULL);
+  sigaction(SIGINT, &act, NULL);
+}
+
 int main(int argc, char *argv[]) {
   if (argc < 2) {
     return child_exit_unknown_error;
   }
 
   from_sling = argc >= 3 && !strcmp("--from-sling", argv[1]);
+
+  catch_term_signal();
 
   read_program(from_sling ? argv[2] : argv[1]);
 
