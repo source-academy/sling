@@ -1,5 +1,5 @@
 {
-  "name": "sling-client",
+  "name": "@sourceacademy/sling-client",
   "version": "0.0.1",
   "description": "Sling client.",
   "main": "dist/index.js",
@@ -22,5 +22,9 @@
     "eslint": "eslint src",
     "format": "eslint --fix src && prettier src",
     "build": "tsc"
-  }
+  },
+  "files": [
+    "dist",
+    "src"
+  ]
 }
