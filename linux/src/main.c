@@ -28,6 +28,7 @@ struct sling_config {
   const char *host;
   const char *device_id;
   const char *server_ca_path;
+  const char *server_ca_dir;
   const char *client_key_path;
   const char *client_cert_path;
   const char *sinter_host_path;
@@ -393,6 +394,7 @@ int main(int argc, char *argv[]) {
   config.port = read_env_int("SLING_PORT", 0);
   config.device_id = getenv("SLING_DEVICE_ID");
   config.server_ca_path = getenv("SLING_CA");
+  config.server_ca_dir = getenv("SLING_CA_DIR");
   config.client_key_path = getenv("SLING_KEY");
   config.client_cert_path = getenv("SLING_CERT");
   config.sinter_host_path = getenv("SINTER_HOST_PATH");
@@ -407,6 +409,7 @@ int main(int argc, char *argv[]) {
       // {"use-tls",     no_argument,       0, 't' },
       {"device-id",   required_argument, 0, 'i' },
       {"server-ca",   required_argument, 0, 's' },
+      {"ca-dir",      required_argument, 0, 'S' },
       {"client-key",  required_argument, 0, 'k' },
       {"client-cert", required_argument, 0, 'c' },
       {"sinter-host", required_argument, 0, 'H' },
@@ -438,6 +441,9 @@ int main(int argc, char *argv[]) {
     case 's':
       config.server_ca_path = optarg;
       break;
+    case 'S':
+      config.server_ca_dir = optarg;
+      break;
     case 'k':
       config.client_key_path = optarg;
       break;
@@ -460,10 +466,6 @@ int main(int argc, char *argv[]) {
     eprintf("No device ID specified.\n");
     fail = true;
   }
-  if (!config.server_ca_path) {
-    eprintf("No server CA specified.\n");
-    fail = true;
-  }
   if (!config.client_key_path) {
     eprintf("No private key specified.\n");
     fail = true;
@@ -471,6 +473,9 @@ int main(int argc, char *argv[]) {
   if (!config.client_cert_path) {
     eprintf("No certificate specified.\n");
     fail = true;
+  }
+  if (!config.server_ca_path && !config.server_ca_dir) {
+    config.server_ca_dir = "/etc/ssl/certs";
   }
   if (!config.sinter_host_path) {
     config.sinter_host_path = "./sinter_host";
@@ -511,7 +516,9 @@ int main(int argc, char *argv[]) {
   mosquitto_log_callback_set(mosq, on_log);
   mosquitto_connect_callback_set(mosq, on_connect);
   mosquitto_message_callback_set(mosq, on_message);
-  mosquitto_tls_set(mosq, config.server_ca_path, NULL, config.client_cert_path, config.client_key_path, NULL);
+  mosquitto_tls_set(mosq, config.server_ca_path,
+                    config.server_ca_path ? NULL : config.server_ca_dir, config.client_cert_path,
+                    config.client_key_path, NULL);
   check_mosq(mosquitto_connect(mosq, config.host, config.port, 30));
 
   main_loop();
