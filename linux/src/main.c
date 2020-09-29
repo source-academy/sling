@@ -31,6 +31,7 @@ struct sling_config {
   const char *client_key_path;
   const char *client_cert_path;
   const char *sinter_host_path;
+  const char *program_path;
 
   int port;
 
@@ -111,14 +112,15 @@ static int check_posix_nonblock(int result, const char *msg) {
 }
 
 static void print_usage(char *argv0) {
-  eprintf("Usage: %s <options>\n%s", argv0,
-    "-h, --host, SLING_HOST:              The hostname of the MQTT server\n"
-    "-p, --port, SLING_PORT:              The port of the MQTT server; defaults to 8883\n"
-    "-i, --device-id, SLING_DEVICE_ID:    The device ID\n"
-    "-s, --server-ca, SLING_CA:           Path to the CA issuing the MQTT server's TLS certificate, in PEM format\n"
-    "-k, --client-key, SLING_KEY:         Path to the private key for the client's TLS certificate, in PEM format\n"
-    "-c, --client-cert, SLING_CERT:       Path to the client's TLS certificate, in PEM format\n"
-    "-H, --sinter-host, SINTER_HOST_PATH: Path to the Sinter host, or ./sinter_host by default\n"
+  eprintf("Usage: %s <options>\n\n%s", argv0,
+    "  -h, --host, SLING_HOST:              The hostname of the MQTT server\n"
+    "  -p, --port, SLING_PORT:              The port of the MQTT server; defaults to 8883\n"
+    "  -i, --device-id, SLING_DEVICE_ID:    The device ID\n"
+    "  -s, --server-ca, SLING_CA:           Path to the CA issuing the MQTT server's TLS certificate, in PEM format\n"
+    "  -k, --client-key, SLING_KEY:         Path to the private key for the client's TLS certificate, in PEM format\n"
+    "  -c, --client-cert, SLING_CERT:       Path to the client's TLS certificate, in PEM format\n"
+    "  -H, --sinter-host, SINTER_HOST_PATH: Path to the Sinter host, or ./sinter_host by default\n"
+    "  -P, --program, SLING_PROGRAM_PATH:   Path to the location at which to save received programs, or ./program.svm by default\n"
     "\n"
     "Options can be passed in via environment variables. Command line options override environment variables.\n"
     "\n"
@@ -126,16 +128,13 @@ static void print_usage(char *argv0) {
   );
 }
 
-// TODO configurable
-static char *program_filename = "program.svm";
-
 static void begin_run_program(const char *program, size_t program_size) {
   if (config.status != sling_message_status_type_idle) {
     send_status();
     return;
   }
 
-  FILE *program_file = fopen(program_filename, "w");
+  FILE *program_file = fopen(config.program_path, "w");
   if (!program_file) {
     check_posix(-1, "program file fopen");
   }
@@ -156,7 +155,7 @@ static void begin_run_program(const char *program, size_t program_size) {
 
     check_posix(
       execl(config.sinter_host_path,
-        config.sinter_host_path, "--from-sling", program_filename, (char *) NULL),
+        config.sinter_host_path, "--from-sling", config.program_path, (char *) NULL),
       "exec sinter host");
 
     _Exit(1);
@@ -397,12 +396,14 @@ int main(int argc, char *argv[]) {
   config.client_key_path = getenv("SLING_KEY");
   config.client_cert_path = getenv("SLING_CERT");
   config.sinter_host_path = getenv("SINTER_HOST_PATH");
+  config.program_path = getenv("SLING_PROGRAM_PATH");
   config.message_counter = config.last_flush_counter = config.display_start_counter = 0;
 
   while (1) {
     static struct option long_options[] = {
       {"host",        required_argument, 0, 'h' },
       {"port",        required_argument, 0, 'p' },
+      {"program",     required_argument, 0, 'P' },
       // {"use-tls",     no_argument,       0, 't' },
       {"device-id",   required_argument, 0, 'i' },
       {"server-ca",   required_argument, 0, 's' },
@@ -413,12 +414,15 @@ int main(int argc, char *argv[]) {
       {0,             0,                 0, 0   }
     };
 
-    int c = getopt_long(argc, argv, "H:h:p:i:s:k:c:", long_options, NULL);
+    int c = getopt_long(argc, argv, "P:H:h:p:i:s:k:c:", long_options, NULL);
     if (c == -1) {
       break;
     }
 
     switch (c) {
+    case 'P':
+      config.program_path = optarg;
+      break;
     case 'H':
       config.sinter_host_path = optarg;
       break;
@@ -470,6 +474,9 @@ int main(int argc, char *argv[]) {
   }
   if (!config.sinter_host_path) {
     config.sinter_host_path = "./sinter_host";
+  }
+  if (!config.program_path) {
+    config.program_path = "program.svm";
   }
   if (fail) {
     return 1;
