@@ -114,6 +114,7 @@ static int check_posix_nonblock(int result, const char *msg) {
 
 static void print_usage(char *argv0) {
   eprintf("Usage: %s <options>\n\n%s", argv0,
+    "  -v, --debug:                         Log verbosely\n"
     "  -h, --host, SLING_HOST:              The hostname of the MQTT server\n"
     "  -p, --port, SLING_PORT:              The port of the MQTT server; defaults to 8883\n"
     "  -i, --device-id, SLING_DEVICE_ID:    The device ID\n"
@@ -388,6 +389,7 @@ static int read_env_int(const char *name, int def) {
 }
 
 int main(int argc, char *argv[]) {
+  bool debug_log = false;
   config.status = sling_message_status_type_idle;
   config.ipcfd = config.epollfd = -1;
   config.host = getenv("SLING_HOST");
@@ -413,16 +415,20 @@ int main(int argc, char *argv[]) {
       {"client-key",  required_argument, 0, 'k' },
       {"client-cert", required_argument, 0, 'c' },
       {"sinter-host", required_argument, 0, 'H' },
+      {"debug",       no_argument,       0, 'v' },
       {"help",        no_argument,       0, 0   },
       {0,             0,                 0, 0   }
     };
 
-    int c = getopt_long(argc, argv, "P:H:h:p:i:s:k:c:", long_options, NULL);
+    int c = getopt_long(argc, argv, "P:H:h:p:i:s:k:c:v", long_options, NULL);
     if (c == -1) {
       break;
     }
 
     switch (c) {
+    case 'v':
+      debug_log = true;
+      break;
     case 'P':
       config.program_path = optarg;
       break;
@@ -513,7 +519,9 @@ int main(int argc, char *argv[]) {
   if (!mosq) {
     fatal_error("Mosquitto instance initialisation failed.\n");
   }
-  mosquitto_log_callback_set(mosq, on_log);
+  if (debug_log) {
+    mosquitto_log_callback_set(mosq, on_log);
+  }
   mosquitto_connect_callback_set(mosq, on_connect);
   mosquitto_message_callback_set(mosq, on_message);
   mosquitto_tls_set(mosq, config.server_ca_path,
