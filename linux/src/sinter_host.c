@@ -6,13 +6,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/types.h>
 
 #include <sinter.h>
 
-#include "common.h"
 #include "../../common/sling_sinter.h"
+#include "common.h"
 
 #ifdef SLING_SINTERHOST_CUSTOM
 #include SLING_SINTERHOST_CUSTOM
@@ -29,9 +29,26 @@ static bool display_buf_fragmented = false;
 static unsigned char *program = NULL;
 static size_t program_size = 0;
 
+static const char *fault_names[] = {"no fault",
+                                    "out of memory",
+                                    "type error",
+                                    "divide by zero",
+                                    "stack overflow",
+                                    "stack underflow",
+                                    "uninitialised load",
+                                    "invalid load",
+                                    "invalid program",
+                                    "internal error",
+                                    "incorrect function arity",
+                                    "program called error()",
+                                    "uninitialised heap"};
+
+void print_result(sinter_value_t *result);
+
 static void send_ipc_message(sinter_value_t *value, enum sling_message_display_type type) {
   size_t message_size = 0;
-  struct sling_message_display *result_message = sling_sinter_value_to_message(value, &message_size);
+  struct sling_message_display *result_message =
+      sling_sinter_value_to_message(value, &message_size);
   if (!result_message) {
     _Exit(child_exit_malloc_fail);
   }
@@ -45,12 +62,19 @@ static void send_ipc_message(sinter_value_t *value, enum sling_message_display_t
 }
 
 static inline enum sling_message_display_type print_type(bool is_error) {
-  return is_error
-    ? sling_message_display_type_error
-    : sling_message_display_type_output;
+  return is_error ? sling_message_display_type_error : sling_message_display_type_output;
 }
 
-__attribute__((format(printf, 2, 3))) static bool printf_buf(bool is_error, const char *format, ...) {
+__attribute__((format(printf, 2, 3))) static bool printf_buf(bool is_error, const char *format,
+                                                             ...) {
+  if (!from_sling) {
+    va_list args;
+    va_start(args, format);
+    vprintf(format, args);
+    va_end(args);
+    return true;
+  }
+
   va_list args;
   va_start(args, format);
   const size_t can_write = sizeof(display_buf) - display_buf_index;
@@ -62,7 +86,7 @@ __attribute__((format(printf, 2, 3))) static bool printf_buf(bool is_error, cons
     // send off this part first
     display_buf_fragmented = true;
     display_buf[display_buf_index] = '\0';
-    sinter_value_t value = { .type = sinter_type_string, .string_value = display_buf };
+    sinter_value_t value = {.type = sinter_type_string, .string_value = display_buf};
     send_ipc_message(&value, print_type(is_error));
 
     display_buf_index = 0;
@@ -83,30 +107,34 @@ __attribute__((format(printf, 2, 3))) static bool printf_buf(bool is_error, cons
 
 static void print_string(const char *str, bool is_error) {
   if (!printf_buf(is_error, "%s", str)) {
-    sinter_value_t value = { .type = sinter_type_string, .string_value = str };
+    sinter_value_t value = {.type = sinter_type_string, .string_value = str};
     send_ipc_message(&value, print_type(is_error));
   }
 }
 
 static void print_integer(int32_t intv, bool is_error) {
-  if (!printf_buf(is_error, "%"PRId32, intv)) {
-    sinter_value_t value = { .type = sinter_type_integer, .integer_value = intv };
+  if (!printf_buf(is_error, "%" PRId32, intv)) {
+    sinter_value_t value = {.type = sinter_type_integer, .integer_value = intv};
     send_ipc_message(&value, print_type(is_error));
   }
 }
 
 static void print_float(float floatv, bool is_error) {
   if (!printf_buf(is_error, "%f", floatv)) {
-    sinter_value_t value = { .type = sinter_type_float, .float_value = floatv };
+    sinter_value_t value = {.type = sinter_type_float, .float_value = floatv};
     send_ipc_message(&value, print_type(is_error));
   }
 }
 
 static void print_flush(bool is_error) {
+  if (!from_sling) {
+    printf("\n");
+    return;
+  }
+
   if (display_buf_fragmented) {
-    struct sling_message_display_flush flush_message = {
-      .message_type = sling_message_display_type_flush
-    };
+    struct sling_message_display_flush flush_message = {.message_type =
+                                                            sling_message_display_type_flush};
     ssize_t sendres = send(IPC_FD, &flush_message, sizeof(flush_message), 0);
     if (sendres == -1) {
       _Exit(child_exit_ipc_fail);
@@ -116,7 +144,7 @@ static void print_flush(bool is_error) {
     return;
   }
 
-  sinter_value_t value = { .type = sinter_type_string, .string_value = display_buf };
+  sinter_value_t value = {.type = sinter_type_string, .string_value = display_buf};
   send_ipc_message(&value, print_type(is_error) | sling_message_display_type_self_flushing);
   display_buf_index = 0;
 }
@@ -172,17 +200,22 @@ int main(int argc, char *argv[]) {
 #include SLING_SINTERHOST_PRERUN
 #endif
 
-  sinter_value_t value = { 0 };
+  sinter_value_t value = {0};
   sinter_fault_t result = sinter_run(program, program_size, &value);
 
   if (result != sinter_fault_none) {
     value.type = sinter_type_string;
-    value.string_value = "Runtime error";
+    value.string_value = fault_names[result];
   }
 
-  send_ipc_message(&value, (result == sinter_fault_none ? sling_message_display_type_result
-                                                        : sling_message_display_type_error) |
-                               sling_message_display_type_self_flushing);
+  if (from_sling) {
+    send_ipc_message(&value, (result == sinter_fault_none ? sling_message_display_type_result
+                                                          : sling_message_display_type_error) |
+                                 sling_message_display_type_self_flushing);
+  } else {
+    print_result(&value);
+    printf("\n");
+  }
 
   return 0;
 }
