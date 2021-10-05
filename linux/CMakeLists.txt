@@ -41,6 +41,7 @@ target_link_libraries(sling libmosquitto_static Threads::Threads)
 add_executable(sinter_host
   src/sinter_host.c
   src/sinter_host_display_result.c
+  src/sinter_host_replace_rand.c
   ../common/sling_sinter.c
 )
 

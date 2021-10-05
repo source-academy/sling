@@ -197,12 +197,16 @@ static void catch_term_signal(void) {
   sigaction(SIGINT, &act, NULL);
 }
 
+void setup_linux_rand(void);
+
 int main(int argc, char *argv[]) {
   if (argc < 2) {
     return child_exit_unknown_error;
   }
 
   from_sling = argc >= 3 && !strcmp("--from-sling", argv[1]);
+
+  setup_linux_rand();
 
   catch_term_signal();
 
