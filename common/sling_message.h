@@ -13,6 +13,20 @@
 #define SLING_OUTTOPIC_STATUS "status"
 #define SLING_OUTTOPIC_DISPLAY "display"
 #define SLING_OUTTOPIC_HELLO "hello"
+#define SLING_OUTTOPIC_MONITOR "monitor"
+
+struct __attribute__((packed)) sling_message_monitor_flush {
+  uint32_t message_counter;
+  uint32_t starting_id;
+};
+_Static_assert(sizeof(struct sling_message_monitor_flush) == 8, "Wrong sling_message_monitor_flush size");
+
+struct __attribute__((packed)) sling_message_monitor {
+  uint32_t message_counter;
+  uint32_t string_length;
+  char string[];
+};
+_Static_assert(sizeof(struct sling_message_monitor) == 8, "Wrong sling_message_monitor size");
 
 enum sling_message_status_type {
   sling_message_status_type_idle = 0,

@@ -41,6 +41,7 @@ struct sling_config {
   char *outtopic_status;
   char *outtopic_display;
   char *outtopic_hello;
+  char *outtopic_monitor;
 
   char *intopic_run;
   char *intopic_stop;
@@ -279,6 +280,27 @@ static void main_loop_epoll_add(enum main_loop_epoll_type type, int fd) {
   check_posix(epoll_ctl(config.epollfd, EPOLL_CTL_ADD, fd, &ev), "epoll_ctl");
 }
 
+static void get_peripherals() {
+  FILE *fp;
+  char path[1035];
+
+  /* Open the command for reading. */
+  fp = popen("/bin/ls /etc/", "r");
+  if (fp == NULL) {
+//        printf("Failed to run command\n" );
+//        exit(1);
+    return;
+  }
+
+  /* Read the output a line at a time - output it. */
+  while (fgets(path, sizeof(path), fp) != NULL) {
+    printf("%s", path);
+  }
+
+  /* close */
+  pclose(fp);
+}
+
 static int main_loop(void) {
   size_t buffer_size = 0x4000;
   char *buffer = malloc(buffer_size);
@@ -500,6 +522,7 @@ int main(int argc, char *argv[]) {
   config.outtopic_display = sling_topic(config.device_id, SLING_OUTTOPIC_DISPLAY);
   config.outtopic_status = sling_topic(config.device_id, SLING_OUTTOPIC_STATUS);
   config.outtopic_hello = sling_topic(config.device_id, SLING_OUTTOPIC_HELLO);
+  config.outtopic_monitor = sling_topic(config.device_id, SLING_OUTTOPIC_MONITOR);
 
   config.intopic_input = sling_topic(config.device_id, SLING_INTOPIC_INPUT);
   config.intopic_ping = sling_topic(config.device_id, SLING_INTOPIC_PING);
