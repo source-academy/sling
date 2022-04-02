@@ -59,7 +59,9 @@ struct sling_config {
 
   uint32_t message_counter;
   uint32_t display_start_counter;
-  uint32_t last_flush_counter;
+  uint32_t last_display_flush_counter;
+  uint32_t monitor_start_counter;
+//  uint32_t last_monitor_flush_counter;
 
 // MUST BE POWER OF 2
 #define LAST_MESSAGE_ID_BUF_SIZE 4
@@ -282,19 +284,47 @@ static void main_loop_epoll_add(enum main_loop_epoll_type type, int fd) {
 
 static void get_peripherals() {
   FILE *fp;
-  char path[1035];
+  char buffer[256];
 
-  /* Open the command for reading. */
-  fp = popen("/bin/ls /etc/", "r");
+  /* Read motors */
+  // for f in /sys/class/lego-sensor/*; do cat $f/{address,driver_name,mode,value0}; done
+//  fp = popen("for f in /sys/class/tacho-motor/*; do cat $f/{address,driver_name,position,speed}; done", "r");
+  fp = popen("for f in /sys/class/tacho-motor/*; do cat $f/{address,driver_name,position,speed}; done; for f in /sys/class/lego-sensor/*; do cat $f/{address,driver_name,mode,value0}; done", "r");
   if (fp == NULL) {
-//        printf("Failed to run command\n" );
-//        exit(1);
     return;
   }
 
-  /* Read the output a line at a time - output it. */
-  while (fgets(path, sizeof(path), fp) != NULL) {
-    printf("%s", path);
+  /* Read the output a line at a time. */
+  uint8_t line_count = 0;
+  while (fgets(buffer, sizeof(buffer), fp) != NULL) {
+//    printf("%s", path);
+
+    ++line_count;
+
+    uint32_t recv_size = strlen(buffer);
+
+    struct sling_message_monitor *to_send = (struct sling_message_monitor *) buffer;
+    to_send->message_counter = config.message_counter;
+    to_send->string_length = recv_size;
+
+    if (line_count == 1) {
+      config.monitor_start_counter = config.message_counter;
+    }
+
+    ++config.message_counter;
+    check_mosq(mosquitto_publish(mosq, NULL, config.outtopic_monitor, recv_size, buffer, 1, false));
+
+    if (line_count == 4) { // flush - expect 4 lines for each motor
+      // TODO
+      struct sling_message_monitor_flush *to_send = {0};
+      to_send->message_counter = config.message_counter;
+      to_send->starting_id = config.monitor_start_counter;
+
+      check_mosq(mosquitto_publish(mosq, NULL, config.outtopic_monitor, recv_size, buffer, 1, false));
+
+      ++config.message_counter;
+      line_count = 0;
+    }
   }
 
   /* close */
@@ -324,6 +354,8 @@ static int main_loop(void) {
   main_loop_epoll_add(main_loop_epoll_child, sigchldfd);
 
   while (1) {
+    get_peripherals();
+
     int nfds = check_posix(epoll_wait(config.epollfd, events, max_events, 1000), "epoll_wait");
     for (int n = 0; n < nfds; ++n) {
       struct epoll_event *ev = events + n;
@@ -363,14 +395,14 @@ static int main_loop(void) {
           }
           struct sling_message_display_flush *to_send_flush = (struct sling_message_display_flush *) buffer;
           to_send_flush->starting_id = config.display_start_counter;
-          config.last_flush_counter = to_send->message_counter;
+          config.last_display_flush_counter = to_send->message_counter;
           recv_size = sizeof(*to_send_flush);
-        } else if (config.display_start_counter <= config.last_flush_counter) {
+        } else if (config.display_start_counter <= config.last_display_flush_counter) {
           config.display_start_counter = to_send->message_counter;
         }
 
         if (to_send->display_type & sling_message_display_type_self_flushing) {
-          config.last_flush_counter = to_send->message_counter;
+          config.last_display_flush_counter = to_send->message_counter;
         }
 
         ++config.message_counter;
@@ -423,7 +455,8 @@ int main(int argc, char *argv[]) {
   config.client_cert_path = getenv("SLING_CERT");
   config.sinter_host_path = getenv("SINTER_HOST_PATH");
   config.program_path = getenv("SLING_PROGRAM_PATH");
-  config.message_counter = config.last_flush_counter = config.display_start_counter = 0;
+  config.message_counter = config.last_display_flush_counter = config.display_start_counter = config.monitor_start_counter = 0;
+//  config.message_counter = config.last_display_flush_counter = config.display_start_counter = config.monitor_start_counter = config.last_monitor_flush_counter = 0;
 
   while (1) {
     static struct option long_options[] = {
