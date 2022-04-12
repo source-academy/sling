@@ -286,10 +286,8 @@ static void get_peripherals() {
   FILE *fp;
   char buffer[256];
 
-  /* Read motors */
-  // for f in /sys/class/lego-sensor/*; do cat $f/{address,driver_name,mode,value0}; done
-//  fp = popen("for f in /sys/class/tacho-motor/*; do cat $f/{address,driver_name,position,speed}; done", "r");
-  fp = popen("for f in /sys/class/tacho-motor/*; do cat $f/{address,driver_name,position,speed}; done; for f in /sys/class/lego-sensor/*; do cat $f/{address,driver_name,mode,value0}; done", "r");
+  /* Read motors and sensors */
+  fp = popen("set -- address driver_name position speed; for f in /sys/class/tacho-motor/*; do for item in \"$@\"; do cat \"$f\"/$item; done; done; set -- address driver_name mode value0; for f in /sys/class/lego-sensor/*; do for item in \"$@\"; do cat \"$f\"/$item; done; done", "r");
   if (fp == NULL) {
     return;
   }
