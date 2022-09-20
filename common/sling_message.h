@@ -23,10 +23,9 @@ _Static_assert(sizeof(struct sling_message_monitor_flush) == 8, "Wrong sling_mes
 
 struct __attribute__((packed)) sling_message_monitor {
   uint32_t message_counter;
-  uint32_t string_length;
   char string[];
 };
-_Static_assert(sizeof(struct sling_message_monitor) == 8, "Wrong sling_message_monitor size");
+_Static_assert(sizeof(struct sling_message_monitor) == 4, "Wrong sling_message_monitor size");
 
 enum sling_message_status_type {
   sling_message_status_type_idle = 0,
