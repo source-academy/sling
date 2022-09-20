@@ -297,6 +297,11 @@ static void get_peripherals() {
     ++line_count;
     uint32_t recv_size = strlen(buffer);
 
+    if (buffer[recv_size - 1] == '\n') {
+      buffer[recv_size - 1] = '\0';
+      --recv_size;
+    }
+
     if (line_count == 1) {
       config.monitor_start_counter = config.message_counter;
     }
