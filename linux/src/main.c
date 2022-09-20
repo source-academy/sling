@@ -283,7 +283,7 @@ static void main_loop_epoll_add(enum main_loop_epoll_type type, int fd) {
 
 static void get_peripherals() {
   FILE *fp;
-  char buffer[256];
+  char buffer[64];
 
   /* Read motors and sensors */
   fp = popen("set -- address driver_name position speed; for f in /sys/class/tacho-motor/*; do for item in $@; do cat $f/$item; done; done; set -- address driver_name mode value0; for f in /sys/class/lego-sensor/*; do for item in $@; do cat $f/$item; done; done", "r");
