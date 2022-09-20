@@ -297,13 +297,29 @@ static void get_peripherals() {
     ++line_count;
     uint32_t recv_size = strlen(buffer);
 
-    char out[recv_size + 4];
+    if (line_count == 1) {
+      config.monitor_start_counter = config.message_counter;
+    }
+
+    char out[recv_size + sizeof(struct sling_message_monitor)];
     struct sling_message_monitor *to_send = (struct sling_message_monitor *) out;
     to_send->message_counter = config.message_counter++;
+    to_send->is_flush = 0;
     strcpy(to_send->string, buffer);
 
     send_hello_if_zero();
-    check_mosq(mosquitto_publish(mosq, NULL, config.outtopic_monitor, recv_size + 4, to_send, 1, false));
+    check_mosq(mosquitto_publish(mosq, NULL, config.outtopic_monitor, recv_size + sizeof(struct sling_message_monitor), to_send, 1, false));
+
+    if (line_count == 4) { // We always expect 4 lines for each peripheral
+      char out[sizeof(struct sling_message_monitor_flush)];
+      struct sling_message_monitor_flush *flush_monitor = (struct sling_message_monitor_flush *) out;
+      flush_monitor->message_counter = config.message_counter++;
+      flush_monitor->is_flush = 1;
+      flush_monitor->starting_id = config.monitor_start_counter;
+      check_mosq(mosquitto_publish(mosq, NULL, config.outtopic_monitor, sizeof(struct sling_message_monitor_flush), flush_monitor, 1, false));
+
+      line_count = 0;
+    }
   }
   pclose(fp);
 }
@@ -331,7 +347,7 @@ static int main_loop(void) {
   main_loop_epoll_add(main_loop_epoll_child, sigchldfd);
 
   while (1) {
-    get_peripherals();
+    get_peripherals(); //
     int nfds = check_posix(epoll_wait(config.epollfd, events, max_events, 1000), "epoll_wait");
     for (int n = 0; n < nfds; ++n) {
       struct epoll_event *ev = events + n;
