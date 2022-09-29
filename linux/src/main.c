@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <dirent.h> 
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -21,6 +22,11 @@
 #include "../../common/sling_message.h"
 
 #define eprintf(...) fprintf(stderr, __VA_ARGS__)
+
+#define FILENAME_LEN 64
+#define PROPNAME_LEN 12
+#define MOTORS_DIR "/sys/class/tacho-motor/"
+#define SENSORS_DIR "/sys/class/lego-sensor/"
 
 typedef enum sling_message_status_type device_status_t;
 
@@ -281,52 +287,82 @@ static void main_loop_epoll_add(enum main_loop_epoll_type type, int fd) {
   check_posix(epoll_ctl(config.epollfd, EPOLL_CTL_ADD, fd, &ev), "epoll_ctl");
 }
 
+static void read_and_send_peripheral_data(char [], char [][PROPNAME_LEN], int);
+
 static void get_peripherals() {
-  FILE *fp;
+  char peripheral[FILENAME_LEN];
+
+  char motor_drivers[][PROPNAME_LEN] = {"address", "driver_name", "position", "speed"};
+  char sensor_drivers[][PROPNAME_LEN] = {"address", "driver_name", "mode", "value0"};
+
+  DIR *d;
+  struct dirent *dir;
+  d = opendir(MOTORS_DIR);
+  if (d) {
+    while ((dir = readdir(d)) != NULL) {
+      if (strcmp(dir->d_name, ".") && strcmp(dir->d_name, "..")) {
+        snprintf(peripheral, FILENAME_LEN, "%s%s", MOTORS_DIR, dir->d_name);
+        read_and_send_peripheral_data(peripheral, motor_drivers, 4);
+      }
+    }
+    closedir(d);
+  }
+
+  d = opendir(SENSORS_DIR);
+  if (d) {
+    while ((dir = readdir(d)) != NULL) {
+      if (strcmp(dir->d_name, ".") && strcmp(dir->d_name, "..")) {
+        snprintf(peripheral, FILENAME_LEN, "%s%s", SENSORS_DIR, dir->d_name);
+        read_and_send_peripheral_data(peripheral, sensor_drivers, 4);
+      }
+    }
+    closedir(d);
+  }
+}
+
+static void read_and_send_peripheral_data(char filename[], char prop_names[][PROPNAME_LEN], int props_count) {
   char buffer[64];
+  char property[FILENAME_LEN];
 
-  /* Read motors and sensors */
-  fp = popen("set -- address driver_name position speed; for f in /sys/class/tacho-motor/*; do for item in $@; do cat $f/$item; done; done; set -- address driver_name mode value0; for f in /sys/class/lego-sensor/*; do for item in $@; do cat $f/$item; done; done", "r");
-  if (fp == NULL) {
-    return;
+  config.monitor_start_counter = config.message_counter;
+
+
+  for (int i = 0; i < props_count; ++i) {
+    FILE *fp;
+    snprintf(property, FILENAME_LEN, "%s/%s", filename, prop_names[i]);
+    fp = fopen(property, "r");
+    if (fp == NULL) {
+        break;
+    }
+
+    while (fgets(buffer, sizeof(buffer), fp) != NULL) {
+      uint32_t recv_size = strlen(buffer);
+
+      if (buffer[recv_size - 1] == '\n') {
+        buffer[recv_size - 1] = '\0';
+        --recv_size;
+      }
+
+      char out[recv_size + sizeof(struct sling_message_monitor)];
+      struct sling_message_monitor *to_send = (struct sling_message_monitor *) out;
+      to_send->message_counter = config.message_counter++;
+      to_send->is_flush = 0;
+      strcpy(to_send->string, buffer);
+
+      send_hello_if_zero();
+      check_mosq(mosquitto_publish(mosq, NULL, config.outtopic_monitor, recv_size + sizeof(struct sling_message_monitor), to_send, 1, false));
+    }
+    fclose(fp);
   }
 
-  /* Read the output a line at a time. */
-  uint8_t line_count = 0;
-  while (fgets(buffer, sizeof(buffer), fp) != NULL) {
-    ++line_count;
-    uint32_t recv_size = strlen(buffer);
-
-    if (buffer[recv_size - 1] == '\n') {
-      buffer[recv_size - 1] = '\0';
-      --recv_size;
-    }
-
-    if (line_count == 1) {
-      config.monitor_start_counter = config.message_counter;
-    }
-
-    char out[recv_size + sizeof(struct sling_message_monitor)];
-    struct sling_message_monitor *to_send = (struct sling_message_monitor *) out;
-    to_send->message_counter = config.message_counter++;
-    to_send->is_flush = 0;
-    strcpy(to_send->string, buffer);
-
-    send_hello_if_zero();
-    check_mosq(mosquitto_publish(mosq, NULL, config.outtopic_monitor, recv_size + sizeof(struct sling_message_monitor), to_send, 1, false));
-
-    if (line_count == 4) { // We always expect 4 lines for each peripheral
-      char out[sizeof(struct sling_message_monitor_flush)];
-      struct sling_message_monitor_flush *flush_monitor = (struct sling_message_monitor_flush *) out;
-      flush_monitor->message_counter = config.message_counter++;
-      flush_monitor->is_flush = 1;
-      flush_monitor->starting_id = config.monitor_start_counter;
-      check_mosq(mosquitto_publish(mosq, NULL, config.outtopic_monitor, sizeof(struct sling_message_monitor_flush), flush_monitor, 1, false));
-
-      line_count = 0;
-    }
+  if (config.monitor_start_counter != config.message_counter) { // Some lines have been sent
+    char out[sizeof(struct sling_message_monitor_flush)];
+    struct sling_message_monitor_flush *flush_monitor = (struct sling_message_monitor_flush *) out;
+    flush_monitor->message_counter = config.message_counter++;
+    flush_monitor->is_flush = 1;
+    flush_monitor->starting_id = config.monitor_start_counter;
+    check_mosq(mosquitto_publish(mosq, NULL, config.outtopic_monitor, sizeof(struct sling_message_monitor_flush), flush_monitor, 1, false));
   }
-  pclose(fp);
 }
 
 static int main_loop(void) {
@@ -352,7 +388,7 @@ static int main_loop(void) {
   main_loop_epoll_add(main_loop_epoll_child, sigchldfd);
 
   while (1) {
-    get_peripherals(); //
+    get_peripherals();
     int nfds = check_posix(epoll_wait(config.epollfd, events, max_events, 1000), "epoll_wait");
     for (int n = 0; n < nfds; ++n) {
       struct epoll_event *ev = events + n;
