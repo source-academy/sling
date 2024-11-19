@@ -1,15 +1,16 @@
+import { connect as mqttConnect, MqttClient } from 'mqtt';
 import { TypedEmitter } from 'tiny-typed-emitter';
-import { MqttClient, connect as mqttConnect } from 'mqtt';
 import {
-  slingDeviceMessageTypes,
   deserialiseMqttMessage,
+  serialiseMqttMessage,
+  slingDeviceMessageTypes,
+  SlingDisplayFlushMessage,
+  SlingDisplayMessageType,
   SlingMessage,
   SlingMessageType,
-  serialiseMqttMessage,
-  SlingOptionalIdMessage,
+  SlingMonitorNonFlushMessage,
   SlingNonFlushDisplayMessage,
-  SlingDisplayFlushMessage,
-  SlingDisplayMessageType
+  SlingOptionalIdMessage
 } from './slingProtocol';
 
 export interface SlingClientOptions {
@@ -34,6 +35,7 @@ export interface SlingClientEvents {
   error: (error: Error) => void;
   message: (message: SlingMessage) => void;
   statusChange: (isRunning: boolean) => void;
+  monitor: (data: string[]) => void;
   prompt: (prompt: string) => void;
   promptDismiss: () => void;
   display: (
@@ -56,6 +58,8 @@ export class SlingClient extends TypedEmitter<SlingClientEvents> {
 
   private readonly _displayBuffer = new Map<number, SlingNonFlushDisplayMessage>();
   private readonly _queuedFlushes = new Set<SlingDisplayFlushMessage>();
+
+  private _monitorData: string[] = [];
 
   constructor(options: SlingClientOptions) {
     super();
@@ -181,6 +185,20 @@ export class SlingClient extends TypedEmitter<SlingClientEvents> {
         } else if (this._deviceStatus.prompt) {
           this._deviceStatus.prompt = undefined;
           this.emit('promptDismiss');
+        }
+        break;
+      }
+
+      case SlingMessageType.MONITOR: {
+        if (message.isFlush) {
+          if (this._monitorData.length === 4) {
+            // Only emit update when message is complete
+            this.emit('monitor', this._monitorData);
+          }
+          this._monitorData = [];
+        } else {
+          const msg = message as SlingMonitorNonFlushMessage;
+          this._monitorData.push(msg.data);
         }
         break;
       }

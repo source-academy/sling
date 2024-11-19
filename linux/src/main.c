@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <dirent.h> 
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -22,6 +23,11 @@
 
 #define eprintf(...) fprintf(stderr, __VA_ARGS__)
 
+#define FILENAME_LEN 64
+#define PROPNAME_LEN 12
+#define MOTORS_DIR "/sys/class/tacho-motor/"
+#define SENSORS_DIR "/sys/class/lego-sensor/"
+
 typedef enum sling_message_status_type device_status_t;
 
 struct sling_config {
@@ -41,6 +47,7 @@ struct sling_config {
   char *outtopic_status;
   char *outtopic_display;
   char *outtopic_hello;
+  char *outtopic_monitor;
 
   char *intopic_run;
   char *intopic_stop;
@@ -58,7 +65,8 @@ struct sling_config {
 
   uint32_t message_counter;
   uint32_t display_start_counter;
-  uint32_t last_flush_counter;
+  uint32_t last_display_flush_counter;
+  uint32_t monitor_start_counter;
 
 // MUST BE POWER OF 2
 #define LAST_MESSAGE_ID_BUF_SIZE 4
@@ -279,6 +287,84 @@ static void main_loop_epoll_add(enum main_loop_epoll_type type, int fd) {
   check_posix(epoll_ctl(config.epollfd, EPOLL_CTL_ADD, fd, &ev), "epoll_ctl");
 }
 
+static void read_and_send_peripheral_data(char [], char [][PROPNAME_LEN], int);
+
+static void get_peripherals() {
+  char peripheral[FILENAME_LEN];
+
+  char motor_drivers[][PROPNAME_LEN] = {"address", "driver_name", "position", "speed"};
+  char sensor_drivers[][PROPNAME_LEN] = {"address", "driver_name", "mode", "value0"};
+
+  DIR *d;
+  struct dirent *dir;
+  d = opendir(MOTORS_DIR);
+  if (d) {
+    while ((dir = readdir(d)) != NULL) {
+      if (strcmp(dir->d_name, ".") && strcmp(dir->d_name, "..")) {
+        snprintf(peripheral, FILENAME_LEN, "%s%s", MOTORS_DIR, dir->d_name);
+        read_and_send_peripheral_data(peripheral, motor_drivers, 4);
+      }
+    }
+    closedir(d);
+  }
+
+  d = opendir(SENSORS_DIR);
+  if (d) {
+    while ((dir = readdir(d)) != NULL) {
+      if (strcmp(dir->d_name, ".") && strcmp(dir->d_name, "..")) {
+        snprintf(peripheral, FILENAME_LEN, "%s%s", SENSORS_DIR, dir->d_name);
+        read_and_send_peripheral_data(peripheral, sensor_drivers, 4);
+      }
+    }
+    closedir(d);
+  }
+}
+
+static void read_and_send_peripheral_data(char filename[], char prop_names[][PROPNAME_LEN], int props_count) {
+  char buffer[64];
+  char property[FILENAME_LEN];
+
+  config.monitor_start_counter = config.message_counter;
+
+
+  for (int i = 0; i < props_count; ++i) {
+    FILE *fp;
+    snprintf(property, FILENAME_LEN, "%s/%s", filename, prop_names[i]);
+    fp = fopen(property, "r");
+    if (fp == NULL) {
+        break;
+    }
+
+    while (fgets(buffer, sizeof(buffer), fp) != NULL) {
+      uint32_t recv_size = strlen(buffer);
+
+      if (buffer[recv_size - 1] == '\n') {
+        buffer[recv_size - 1] = '\0';
+        --recv_size;
+      }
+
+      char out[recv_size + sizeof(struct sling_message_monitor)];
+      struct sling_message_monitor *to_send = (struct sling_message_monitor *) out;
+      to_send->message_counter = config.message_counter++;
+      to_send->is_flush = 0;
+      strcpy(to_send->string, buffer);
+
+      send_hello_if_zero();
+      check_mosq(mosquitto_publish(mosq, NULL, config.outtopic_monitor, recv_size + sizeof(struct sling_message_monitor), to_send, 1, false));
+    }
+    fclose(fp);
+  }
+
+  if (config.monitor_start_counter != config.message_counter) { // Some lines have been sent
+    char out[sizeof(struct sling_message_monitor_flush)];
+    struct sling_message_monitor_flush *flush_monitor = (struct sling_message_monitor_flush *) out;
+    flush_monitor->message_counter = config.message_counter++;
+    flush_monitor->is_flush = 1;
+    flush_monitor->starting_id = config.monitor_start_counter;
+    check_mosq(mosquitto_publish(mosq, NULL, config.outtopic_monitor, sizeof(struct sling_message_monitor_flush), flush_monitor, 1, false));
+  }
+}
+
 static int main_loop(void) {
   size_t buffer_size = 0x4000;
   char *buffer = malloc(buffer_size);
@@ -302,6 +388,7 @@ static int main_loop(void) {
   main_loop_epoll_add(main_loop_epoll_child, sigchldfd);
 
   while (1) {
+    get_peripherals();
     int nfds = check_posix(epoll_wait(config.epollfd, events, max_events, 1000), "epoll_wait");
     for (int n = 0; n < nfds; ++n) {
       struct epoll_event *ev = events + n;
@@ -341,14 +428,14 @@ static int main_loop(void) {
           }
           struct sling_message_display_flush *to_send_flush = (struct sling_message_display_flush *) buffer;
           to_send_flush->starting_id = config.display_start_counter;
-          config.last_flush_counter = to_send->message_counter;
+          config.last_display_flush_counter = to_send->message_counter;
           recv_size = sizeof(*to_send_flush);
-        } else if (config.display_start_counter <= config.last_flush_counter) {
+        } else if (config.display_start_counter <= config.last_display_flush_counter) {
           config.display_start_counter = to_send->message_counter;
         }
 
         if (to_send->display_type & sling_message_display_type_self_flushing) {
-          config.last_flush_counter = to_send->message_counter;
+          config.last_display_flush_counter = to_send->message_counter;
         }
 
         ++config.message_counter;
@@ -401,7 +488,7 @@ int main(int argc, char *argv[]) {
   config.client_cert_path = getenv("SLING_CERT");
   config.sinter_host_path = getenv("SINTER_HOST_PATH");
   config.program_path = getenv("SLING_PROGRAM_PATH");
-  config.message_counter = config.last_flush_counter = config.display_start_counter = 0;
+  config.message_counter = config.last_display_flush_counter = config.display_start_counter = config.monitor_start_counter = 0;
 
   while (1) {
     static struct option long_options[] = {
@@ -500,6 +587,7 @@ int main(int argc, char *argv[]) {
   config.outtopic_display = sling_topic(config.device_id, SLING_OUTTOPIC_DISPLAY);
   config.outtopic_status = sling_topic(config.device_id, SLING_OUTTOPIC_STATUS);
   config.outtopic_hello = sling_topic(config.device_id, SLING_OUTTOPIC_HELLO);
+  config.outtopic_monitor = sling_topic(config.device_id, SLING_OUTTOPIC_MONITOR);
 
   config.intopic_input = sling_topic(config.device_id, SLING_INTOPIC_INPUT);
   config.intopic_ping = sling_topic(config.device_id, SLING_INTOPIC_PING);
