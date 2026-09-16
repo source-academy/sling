@@ -1,4 +1,4 @@
-import { SerialiserEntry, serialise } from './serialiser';
+import { serialise, SerialiserEntry } from './serialiser';
 
 function flip<T extends string>(o: Record<T, number>): Record<number, T | undefined> {
   // TODO fixme
@@ -13,13 +13,15 @@ export const enum SlingMessageType {
   STATUS = 'status',
   DISPLAY = 'display',
   INPUT = 'input',
-  HELLO = 'hello'
+  HELLO = 'hello',
+  MONITOR = 'monitor'
 }
 
 export const slingDeviceMessageTypes = [
   SlingMessageType.DISPLAY,
   SlingMessageType.STATUS,
-  SlingMessageType.HELLO
+  SlingMessageType.HELLO,
+  SlingMessageType.MONITOR
 ];
 export const slingClientMessageTypes = [
   SlingMessageType.RUN,
@@ -106,6 +108,19 @@ export type SlingNonFlushDisplayMessage =
 
 export type SlingDisplayMessage = SlingNonFlushDisplayMessage | SlingDisplayFlushMessage;
 
+export interface SlingMonitorNonFlushMessage extends SlingEmptyMessage<SlingMessageType.MONITOR> {
+  isFlush: boolean;
+  data: string;
+}
+
+export interface SlingMonitorFlushMessage extends SlingEmptyMessage<SlingMessageType.MONITOR> {
+  isFlush: boolean;
+  startingId: number;
+  endingId: number;
+}
+
+export type SlingMonitorMessage = SlingMonitorFlushMessage | SlingMonitorNonFlushMessage;
+
 export type SlingStatus = keyof typeof slingStatusToId;
 
 const slingStatusToId = {
@@ -133,7 +148,8 @@ export type SlingNoIdMessage =
   | SlingStatusMessage
   | SlingStopMessage
   | SlingPingMessage
-  | SlingHelloMessage;
+  | SlingHelloMessage
+  | SlingMonitorMessage;
 
 export type SlingOptionalIdMessage = SlingNoIdMessage & { id?: number };
 export type SlingMessage = SlingNoIdMessage & { id: number };
@@ -184,6 +200,14 @@ export function deserialiseMqttMessage(topic: string, data: Buffer): SlingMessag
       return { id, type };
     case SlingMessageType.RUN:
       return { id, type, code: data.slice(4) };
+    case SlingMessageType.MONITOR: {
+      const isFlush = data.readUInt8(4) === 1;
+      const common = { id, type, isFlush };
+      if (isFlush) {
+        return { ...common, startingId: data.readUInt32LE(5), endingId: id };
+      }
+      return { ...common, data: data.slice(5).toString() };
+    }
     case SlingMessageType.STATUS: {
       const status = slingStatusById[data.readUInt16LE(4)];
       if (!status) {

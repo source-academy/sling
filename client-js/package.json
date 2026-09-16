@@ -1,6 +1,6 @@
 {
   "name": "@sourceacademy/sling-client",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Sling client.",
   "main": "dist/index.js",
   "repository": "https://github.com/source-academy/sling",
